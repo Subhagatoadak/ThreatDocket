@@ -1,11 +1,18 @@
 """Terminal dashboard for local findings and MITRE ATLAS reference data."""
+from pathlib import Path
 import re
+import time
 
 from rich.text import Text
+from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.suggester import SuggestFromList
+from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input, Markdown, ProgressBar, Select,
+                             Static, TabbedContent, TabPane)
 
+from . import advisory as llm
 from .review import catalog
 
 COLUMNS = {
@@ -28,7 +35,12 @@ def section(title, *items):
 
 class Dashboard(App):
     TITLE = "THREATDOCKET"
-    BINDINGS = [("q", "quit", "Quit")]
+    BINDINGS = [
+        ("q", "quit", "Quit"),
+        Binding("ctrl+t", "llm('check')", "Check model", priority=True),
+        Binding("ctrl+r", "llm('run')", "Run advisory", priority=True),
+        Binding("ctrl+s", "llm('save')", "Save model settings", priority=True),
+    ]
     CSS = """
     Screen { background: $surface; }
     Header { background: $primary-background; }
@@ -41,14 +53,43 @@ class Dashboard(App):
     .table { width: 3fr; min-width: 24; height: 1fr; }
     .detail-scroll { width: 2fr; min-width: 18; padding: 0 1; border-left: solid $primary; }
     .detail { height: auto; }
+    #llm-form { width: 60; min-width: 36; padding: 0 1; }
+    #llm-form Select, #llm-form Input { margin: 0 0 1 0; }
+    #llm-form Input { background: $boost; height: 1; }
+    .llm-label { color: $text-muted; height: 1; }
+    .llm-hint { color: $text-muted; height: auto; margin: 0 0 1 0; }
+    .llm-buttons { height: 3; margin: 1 0 0 0; }
+    .llm-buttons Button { margin: 0 1 0 0; min-width: 10; }
+    #llm-checks Checkbox { margin: 0 2 0 0; }
+    #llm-checks { height: auto; }
+    #llm-right { width: 1fr; padding: 0 1; border-left: solid $primary; }
+    #llm-status { height: auto; }
+    #llm-progress { margin: 0 0 1 0; }
+    #llm-steps { height: auto; max-height: 14; }
+    #llm-help { height: auto; }
+    #ai-meta { height: auto; padding: 1 2; background: $panel; }
+    #llm-result-scroll { height: 1fr; padding: 0 1; }
     """
 
-    def __init__(self, report):
+    STATUS_ICONS = {"run": ("…", "yellow"), "ok": ("✓", "green"), "warn": ("!", "yellow"), "fail": ("✗", "bold red")}
+
+    def __init__(self, report, config_file=None):
         super().__init__()
         self.report = report
         self.atlas = catalog()
         self.rows = self._rows()
         self.filtered_rows = {}
+        self.config_file = config_file
+        self.saved = llm.load_saved(config_file)
+        try:
+            self.llm_provider = llm.active_provider(self.saved)
+        except ValueError:
+            self.llm_provider = "openai"
+        self.llm_drafts = {}
+        self.llm_steps = []
+        self.llm_started = None
+        self.llm_waiting = ""
+        self.ai_results = []
 
     def _rows(self):
         atlas = self.atlas
@@ -145,8 +186,66 @@ class Dashboard(App):
                                     "NOT_VERIFIED means evidence is missing. NOT_APPLICABLE is declared in the profile.")
                     text += section("Scan limitations", *(report["warnings"] or ["No scan warnings."]))
                     yield Static(Text(plain(text)))
+            with TabPane("AI advisor", id="advisor"):
+                yield from self._compose_advisor()
+            with TabPane("AI findings", id="ai-findings"):
+                yield from self._compose_ai_findings()
 
         yield Footer()
+
+    def _compose_advisor(self):
+        current = llm.provider_settings(self.llm_provider, self.saved)
+        spec = llm.PROVIDERS[self.llm_provider]
+        with Horizontal(classes="split"):
+            with VerticalScroll(id="llm-form"):
+                yield Static("Provider", classes="llm-label")
+                yield Select([(p.label, key) for key, p in llm.PROVIDERS.items()], value=self.llm_provider,
+                             allow_blank=False, compact=True, id="llm-provider")
+                yield Static("Model", classes="llm-label")
+                yield Input(current.model, placeholder="Required: enter a model name", compact=True,
+                            id="llm-model")
+                yield Static("Base URL", classes="llm-label")
+                yield Input(current.base_url, placeholder=spec.base_url or "https://your-endpoint.example/v1",
+                            compact=True, id="llm-base-url")
+                yield Static("API key", classes="llm-label")
+                yield Input(current.api_key, placeholder="Paste your API key", password=True, compact=True,
+                            id="llm-api-key")
+                with Horizontal(id="llm-checks"):
+                    yield Checkbox("Show key", compact=True, id="llm-show-key")
+                    yield Checkbox("Remember key", value=True, compact=True, id="llm-remember")
+                yield Static(self._hint(), id="llm-hint", classes="llm-hint")
+                with Horizontal(classes="llm-buttons"):
+                    yield Button("Check", id="llm-check", variant="primary")
+                    yield Button("Run advisory", id="llm-run", variant="success")
+                    yield Button("Save", id="llm-save")
+            with Vertical(id="llm-right"):
+                yield Static(Text("Ready. Press Check (Ctrl+T) to verify, then Run advisory (Ctrl+R).", style="dim"),
+                             id="llm-status")
+                yield ProgressBar(total=len(llm.CHECK_STEPS), show_eta=False, id="llm-progress")
+                yield Static(id="llm-steps")
+                yield Static(Text(
+                    "\nHow it works\n"
+                    "1. Choose a provider, paste an API key and enter a model name.\n"
+                    "2. Change the base URL for a proxy, gateway or self-hosted endpoint.\n"
+                    "3. Check (Ctrl+T) verifies everything; with no model entered it lists available models.\n"
+                    "4. Run advisory (Ctrl+R). The answer opens in the AI findings tab.\n\n"
+                    "Only aggregate rule counts and fixed remediation text are sent. Repository contents, "
+                    "filenames, paths, evidence references and credential matches stay local.", style="dim"),
+                    id="llm-help")
+
+    def _compose_ai_findings(self):
+        yield Static(Text("No AI findings yet.", style="bold"), id="ai-meta")
+        with VerticalScroll(id="llm-result-scroll"):
+            yield Markdown(
+                "Open the **AI advisor** tab, configure a provider, API key and model, then press "
+                "**Run advisory** (Ctrl+R). The model's analysis of your findings and control gaps appears here.",
+                id="llm-result")
+
+    def _hint(self):
+        spec = llm.PROVIDERS[self.llm_provider]
+        default = f"Default URL: {spec.base_url}" if spec.base_url else "Use the endpoint root, usually ending in /v1"
+        location = str(self.config_file or llm.config_path()).replace(str(Path.home()), "~", 1)
+        return f"{default}\nSettings file: {location} (owner-only)"
 
     def on_mount(self):
         for key, columns in COLUMNS.items():
@@ -179,8 +278,168 @@ class Dashboard(App):
         target.parent.scroll_home(animate=False)
 
     def on_input_changed(self, event: Input.Changed):
-        key = event.input.id.removeprefix("search-")
-        self.populate(key, event.value.strip())
+        if event.input.id and event.input.id.startswith("search-"):
+            self.populate(event.input.id.removeprefix("search-"), event.value.strip())
+
+    # ------------------------------------------------------------------ AI advisor
+
+    def _form_config(self):
+        return llm.LLMConfig(
+            provider=self.llm_provider,
+            model=self.query_one("#llm-model", Input).value.strip(),
+            base_url=self.query_one("#llm-base-url", Input).value.strip(),
+            api_key=self.query_one("#llm-api-key", Input).value.strip(),
+        )
+
+    def on_select_changed(self, event: Select.Changed):
+        if event.select.id != "llm-provider" or event.value == self.llm_provider or event.value is Select.BLANK:
+            return
+        self.llm_drafts[self.llm_provider] = self._form_config()
+        self.llm_provider = event.value
+        config = self.llm_drafts.get(self.llm_provider) or llm.provider_settings(self.llm_provider, self.saved)
+        spec = llm.PROVIDERS[self.llm_provider]
+        model = self.query_one("#llm-model", Input)
+        model.value, model.placeholder, model.suggester = config.model, "Required: enter a model name", None
+        url = self.query_one("#llm-base-url", Input)
+        url.value, url.placeholder = config.base_url, spec.base_url or "https://your-endpoint.example/v1"
+        self.query_one("#llm-api-key", Input).value = config.api_key
+        self.query_one("#llm-hint", Static).update(self._hint())
+        self._reset_progress(len(llm.CHECK_STEPS), "")
+
+    def on_checkbox_changed(self, event: Checkbox.Changed):
+        if event.checkbox.id == "llm-show-key":
+            self.query_one("#llm-api-key", Input).password = not event.value
+
+    def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id in {"llm-save", "llm-check", "llm-run"}:
+            self.action_llm(event.button.id.removeprefix("llm-"))
+
+    def action_llm(self, action):
+        self.query_one(TabbedContent).active = "advisor"
+        if self.query_one("#llm-check", Button).disabled:  # a request is already running
+            return
+        if action == "save":
+            self._save(self._form_config(), announce=True)
+        elif action == "check":
+            self._start(len(llm.CHECK_STEPS), "Checking connection…")
+            self.run_check(self._form_config())
+        elif action == "run":
+            self._start(len(llm.ADVISE_STEPS), "Requesting advisory…")
+            self.run_advice(self._form_config())
+
+    def _save(self, config, announce=False):
+        remember = self.query_one("#llm-remember", Checkbox).value
+        try:
+            path = llm.save_config(config, remember_key=remember, path=self.config_file)
+        except (OSError, ValueError) as error:
+            self._status(f"✗ Could not save settings: {plain(error)}", "bold red")
+            return
+        self.saved = llm.load_saved(self.config_file)
+        if announce:
+            self._status(f"✓ Saved {llm.PROVIDERS[config.provider].label} settings to {path}"
+                         + ("" if remember else " (API key not stored)"), "green")
+
+    def _status(self, message, style=""):
+        self.query_one("#llm-status", Static).update(Text(plain(message), style=style))
+
+    def _reset_progress(self, total, message):
+        self.llm_steps = []
+        self.query_one("#llm-progress", ProgressBar).update(total=total, progress=0)
+        self.query_one("#llm-steps", Static).update("")
+        self._status(message, "bold cyan")
+
+    def _set_busy(self, busy):
+        for name in ("llm-check", "llm-run", "llm-save", "llm-provider"):
+            self.query_one("#" + name).disabled = busy
+
+    def _start(self, total, message):
+        self._reset_progress(total, message)
+        self._set_busy(True)
+        self.llm_started = time.monotonic()
+        self.llm_waiting = ""
+        self.ai_results = []
+        self.llm_timer = self.set_interval(0.5, self._tick)
+
+    def _tick(self):
+        if self.llm_waiting and self.llm_started:
+            self._status(f"{self.llm_waiting}  {time.monotonic() - self.llm_started:.0f}s", "bold cyan")
+
+    def _finish(self, ok, message):
+        if getattr(self, "llm_timer", None):
+            self.llm_timer.stop()
+        self.llm_waiting = ""
+        self.ai_results = []
+        self._set_busy(False)
+        elapsed = f"  ({time.monotonic() - self.llm_started:.1f}s)" if self.llm_started else ""
+        self._status(("✓ " if ok else "✗ ") + message + elapsed, "bold green" if ok else "bold red")
+
+    def _progress(self, index, total, label, status, detail):
+        """Called from the worker thread via call_from_thread."""
+        if index < len(self.llm_steps):
+            self.llm_steps[index] = (label, status, detail)
+        else:
+            self.llm_steps.append((label, status, detail))
+        self.llm_waiting = f"{label}…" if status == "run" else ""
+        done = sum(1 for _l, s, _d in self.llm_steps if s in {"ok", "warn"})
+        self.query_one("#llm-progress", ProgressBar).update(total=total, progress=done)
+        text = Text()
+        for i, (name, state, info) in enumerate(self.llm_steps):
+            icon, style = self.STATUS_ICONS[state]
+            text.append(f" {icon} ", style=style)
+            text.append(f"{i + 1}/{total} {name}\n", style="bold" if state == "run" else "")
+            if info:
+                text.append(f"     {plain(info)}\n", style="red" if state == "fail" else "dim")
+        self.query_one("#llm-steps", Static).update(text)
+        self._tick()
+
+    def _apply_models(self, models):
+        if models:
+            self.query_one("#llm-model", Input).suggester = SuggestFromList(models, case_sensitive=False)
+
+    @work(thread=True, exclusive=True, group="llm")
+    def run_check(self, config):
+        report = lambda *args: self.call_from_thread(self._progress, *args)
+        ok, models = llm.check_connection(config, report)
+        self.call_from_thread(self._apply_models, models)
+        if ok:
+            self.call_from_thread(self._save, config)
+            warned = any(s == "warn" for _l, s, _d in self.llm_steps)
+            self.call_from_thread(self._finish, True, "All checks passed" + (" with warnings" if warned else "")
+                                  + " · settings saved · ready to run")
+        else:
+            self.call_from_thread(self._finish, False, "Check failed; fix the highlighted step and retry")
+
+    @work(thread=True, exclusive=True, group="llm")
+    def run_advice(self, config):
+        report = lambda *args: self.call_from_thread(self._progress, *args)
+        try:
+            text = llm.advisory(self.report, config, report)
+        except ValueError:
+            self.call_from_thread(self._finish, False, "Advisory failed; see the failed step")
+            return
+        self.call_from_thread(self._save, config)
+        self.call_from_thread(self._show_ai_findings, config, text)
+        self.call_from_thread(self._finish, True, "Advisory received · opened in the AI findings tab")
+
+    def _show_ai_findings(self, config, text):
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        label = llm.PROVIDERS[config.provider].label
+        self.ai_results.insert(0, (stamp, label, config.model, plain(text)))
+        latest = self.ai_results[0]
+        meta = Text(f"AI findings  ·  {latest[1]}  ·  {latest[2]}  ·  {latest[0]}", style="bold cyan")
+        meta.append(f"\n{len(self.ai_results)} run(s) this session, newest first. Advisory text only; it does not "
+                    "change findings, verdicts or CI.", style="dim")
+        self.query_one("#ai-meta", Static).update(meta)
+        body = "\n\n---\n\n".join(f"## {model} · {provider} · {when}\n\n{answer}"
+                                     for when, provider, model, answer in self.ai_results)
+        self.query_one("#llm-result", Markdown).update(body)
+        tabs = self.query_one(TabbedContent)
+        try:
+            tabs.get_tab("ai-findings").label = f"AI findings ({len(self.ai_results)})"
+        except Exception:  # label update is cosmetic
+            pass
+        tabs.active = "ai-findings"
+        self.query_one("#llm-result-scroll", VerticalScroll).scroll_home(animate=False)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted):
         key = event.data_table.id.removeprefix("table-")
