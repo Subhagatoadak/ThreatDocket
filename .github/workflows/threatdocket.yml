@@ -64,3 +64,11 @@ jobs:
           # Showcase only: these findings are deliberate and never fail CI.
           fail-on-findings: "false"
           annotations: "false"
+          # AI advisory: enabled once the THREATDOCKET_LLM_PROVIDER repository variable is set.
+          # Configure under Settings -> Secrets and variables -> Actions (see README).
+          # Only aggregate rule counts are sent to the model, never source code.
+          advise: ${{ vars.THREATDOCKET_LLM_PROVIDER != '' && 'true' || 'false' }}
+          llm-provider: ${{ vars.THREATDOCKET_LLM_PROVIDER }}
+          llm-model: ${{ vars.THREATDOCKET_LLM_MODEL }}
+          llm-base-url: ${{ vars.THREATDOCKET_LLM_BASE_URL }}
+          llm-api-key: ${{ secrets.THREATDOCKET_LLM_API_KEY }}
