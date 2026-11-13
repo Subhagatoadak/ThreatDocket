@@ -47,18 +47,69 @@ The filesystem scanner visits recognized text formats under the supplied directo
 
 Static findings use `FAIL` for explicit configuration policy matches and `REVIEW` for patterns that need human verification. Control rows use `ATTESTED_PASS` or `ATTESTED_FAIL` for supplied outcomes, `NOT_VERIFIED` for missing evidence, and `NOT_APPLICABLE` for explicitly absent features. Conflicting evidence and profile declarations yield `REVIEW`. An empty findings table means no enabled static rule matched the files examined.
 
-## CI and Python integration
+## GitHub Actions: findings in code scanning and pull requests
+
+Add ThreatDocket to any repository and every push and pull request is scanned. Results appear in three places:
+
+- **Security → Code scanning**: one alert per finding, with severity, the recommended fix and the MITRE ATLAS technique. Alerts close automatically when the code is fixed.
+- **Pull request "Files changed"**: annotations on the affected lines, and a failing check when a `FAIL` finding is introduced.
+- **The workflow run summary**: a table of every finding, plus an optional AI advisory.
+
+Create `.github/workflows/threatdocket.yml` in the repository you want to protect:
+
+```yaml
+name: ThreatDocket
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  threatdocket:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # publish results to code scanning
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Subhagatoadak/ThreatDocket@main
+        with:
+          exclude: |
+            tests/fixtures/**
+```
+
+| Input | Default | Purpose |
+| --- | --- | --- |
+| `path` | `.` | Directory to scan |
+| `exclude` | | Glob patterns to skip, one per line or comma-separated |
+| `profile`, `evidence`, `policy` | | JSON files described in the section above |
+| `fail-on-findings` | `true` | Fail the check on a `FAIL` finding or an `ATTESTED_FAIL` control. `REVIEW` findings never fail the check |
+| `upload-sarif` | `true` | Publish to code scanning |
+| `annotations` | `true` | Show findings inline on the pull request |
+| `advise` | `false` | Add an AI advisory to the run summary; also set `llm-provider`, `llm-model` and `llm-api-key: ${{ secrets.YOUR_KEY }}` |
+
+The action outputs `fail-count`, `review-count`, `exit-code`, `sarif-file` and `json-file` for later steps. Code scanning is free for public repositories. Private repositories need GitHub Advanced Security (GitHub Code Security) for the Security tab; annotations and the run summary work without it. Set `upload-sarif: false` if it is not available. Pull requests from forks cannot upload to code scanning, so the action continues and still annotates the pull request. Pin a release tag or commit SHA instead of `@main` for stable builds.
+
+## Command-line CI and Python integration
 
 ```bash
 threatdocket scan . --profile examples/profile.json --output report.json --fail-on-findings
+threatdocket scan . --exclude 'tests/**' --sarif results.sarif --annotations --summary summary.md
 ```
 
-Exit codes are `0` for successful execution, `1` when the opt-in CI gate sees a static `FAIL` or an `ATTESTED_FAIL`, and `2` for invalid arguments or input errors. An existing output file is protected from overwrite.
+`--sarif` writes SARIF 2.1.0 for GitHub code scanning or any SARIF viewer. `--annotations` prints GitHub Actions annotation commands. `--summary` appends a Markdown table to a file such as `$GITHUB_STEP_SUMMARY`. `--exclude` can be repeated and works for `scan`, `tui` and `advise`.
+
+Exit codes are `0` for successful execution, `1` when the opt-in CI gate sees a static `FAIL` or an `ATTESTED_FAIL`, and `2` for invalid arguments or input errors. Existing JSON and SARIF output files are protected from overwrite.
 
 ```python
 from threatdocket import catalog, review
 
-report = review("/path/to/project", profile="profile.json", evidence="evidence.json")
+report = review("/path/to/project", profile="profile.json", evidence="evidence.json", exclude=["tests/**"])
 print(report["summary"])
 reference = catalog()
 ```

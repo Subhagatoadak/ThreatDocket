@@ -93,10 +93,11 @@ def _evidence(path, controls):
     return rows
 
 
-def review(root, *, profile=None, evidence=None, policy=None):
+def review(root, *, profile=None, evidence=None, policy=None, exclude=()):
     """Return a JSON-serializable local assessment.
 
     Optional profile, evidence and policy arguments are paths to JSON files.
+    exclude is a sequence of glob patterns (relative to root) to skip.
     Supplied control outcomes are attestations with opaque evidence references.
     """
     project = Path(root).expanduser().resolve(strict=True)
@@ -106,7 +107,7 @@ def review(root, *, profile=None, evidence=None, policy=None):
     controls = _controls(policy)
     evidence_rows = _evidence(evidence, controls)
     source = _catalog()
-    findings, warnings, examined, skipped = scan(project)
+    findings, warnings, examined, skipped = scan(project, exclude)
     case_index = defaultdict(list)
     for case in source["cases"]:
         for tid in case["techniques"]:

@@ -1,4 +1,5 @@
 """Read-only checks. Rule output contains locations and remediation, never source snippets."""
+from fnmatch import fnmatchcase
 import ast
 import os
 import re
@@ -126,21 +127,35 @@ def yaml_findings(content, path):
     return [finding(rule, path) for rule in sorted(result)]
 
 
-def scan(root):
+def excluded(relative, patterns):
+    """True when a POSIX relative path matches a glob pattern or sits under an excluded directory."""
+    for pattern in patterns:
+        pattern = pattern.strip().strip("/")
+        if pattern and (fnmatchcase(relative, pattern) or relative == pattern or relative.startswith(pattern + "/")
+                        or fnmatchcase(relative, pattern.removesuffix("/**"))):
+            return True
+    return False
+
+
+def scan(root, exclude=()):
     findings, warnings = [], []
     examined = skipped = 0
+    root = Path(root)
 
     def walk_error(_error):
         warnings.append("A directory could not be enumerated.")
 
     for directory, dirs, names in os.walk(root, onerror=walk_error):
-        dirs[:] = sorted(d for d in dirs if d not in EXCLUDED and not (Path(directory) / d).is_symlink())
+        dirs[:] = sorted(d for d in dirs if d not in EXCLUDED and not (Path(directory) / d).is_symlink()
+                         and not excluded((Path(directory) / d).relative_to(root).as_posix(), exclude))
         for name in sorted(names):
             path = Path(directory) / name
             docker = name == "Dockerfile" or name.startswith("Dockerfile.") or name.endswith(".Dockerfile")
             if not docker and path.suffix.lower() not in SUFFIXES and not name.startswith(".env"):
                 continue
             relative = path.relative_to(root).as_posix()
+            if excluded(relative, exclude):
+                continue
             if path.is_symlink() or not path.is_file():
                 skipped += 1
                 continue
