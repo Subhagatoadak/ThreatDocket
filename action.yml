@@ -1,5 +1,5 @@
 name: ThreatDocket scan
-description: Scan a repository for AI security risks mapped to MITRE ATLAS and report them in GitHub code scanning, PR annotations and the job summary.
+description: Find AI security risks mapped to MITRE ATLAS. Reports to code scanning and PR annotations, with an optional AI advisory.
 author: Subhagatoadak
 branding:
   icon: shield
