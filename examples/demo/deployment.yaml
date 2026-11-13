@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: local-review-example
+spec:
+  hostNetwork: true
+  containers:
+    - name: example
+      image: example.invalid/container
+      securityContext:
+        privileged: true

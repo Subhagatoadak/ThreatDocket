@@ -1,0 +1,15 @@
+{
+  "features": {
+    "llm": true,
+    "tools": true,
+    "retrieval": true,
+    "rendering": true,
+    "memory": true,
+    "artifacts": true,
+    "credentials": true,
+    "execution": true,
+    "ai_service": true,
+    "training": false,
+    "predictive": false
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "controls": [
+    {
+      "id": "cross-session-record-boundary",
+      "title": "Keep retained business records outside future chat context",
+      "feature": "memory",
+      "techniques": ["AML.T0085.002"],
+      "evidence": "Access-policy export and cross-session isolation results for synthetic business records."
+    }
+  ]
+}

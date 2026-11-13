@@ -1,0 +1,12 @@
+{
+  "controls": {
+    "tool-authorization": {
+      "outcome": "pass",
+      "reference": "demo:synthetic-authorization-results"
+    },
+    "renderer-egress": {
+      "outcome": "fail",
+      "reference": "demo:renderer-policy-review"
+    }
+  }
+}
