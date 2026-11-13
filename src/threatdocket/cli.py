@@ -42,8 +42,15 @@ def main(argv=None):
         cmd.add_argument("project", type=Path, nargs="?", default=Path.cwd())
         for argument in ("profile", "evidence", "policy"):
             cmd.add_argument("--" + argument, type=Path)
+        cmd.add_argument("--exclude", action="append", default=[], metavar="GLOB",
+                         help="Skip files or folders matching this pattern (repeatable), e.g. 'tests/**'")
         if name == "scan":
-            cmd.add_argument("--output", type=Path, help="Write to a new report file")
+            cmd.add_argument("--output", type=Path, help="Write the JSON report to a new file")
+            cmd.add_argument("--sarif", type=Path, help="Write a SARIF 2.1.0 file for GitHub code scanning")
+            cmd.add_argument("--annotations", action="store_true",
+                             help="Print GitHub Actions annotations so findings show inline on pull requests")
+            cmd.add_argument("--summary", type=Path,
+                             help="Append a Markdown summary to this file (e.g. $GITHUB_STEP_SUMMARY)")
             cmd.add_argument("--fail-on-findings", action="store_true",
                              help="Return exit code 1 for static FAIL findings or attested control failures")
         if name == "advise":
@@ -61,7 +68,9 @@ def main(argv=None):
             return 0 if ok else 1
         from .review import review
 
-        report = review(args.project, profile=args.profile, evidence=args.evidence, policy=args.policy)
+        exclude = [p.strip() for value in args.exclude for p in value.replace(",", "\n").splitlines() if p.strip()]
+        report = review(args.project, profile=args.profile, evidence=args.evidence, policy=args.policy,
+                        exclude=exclude)
         if args.command == "tui":
             from .tui import Dashboard
 
@@ -73,11 +82,21 @@ def main(argv=None):
             config = resolve_config(args.provider, args.model, args.base_url)
             print(plain(advisory(report, config, _progress_printer(sys.stderr))))
         else:
+            from . import ci
+
             result = json.dumps(report, indent=2, ensure_ascii=True) + "\n"
             if args.output:
                 with args.output.open("x", encoding="utf-8") as handle:
                     handle.write(result)
-            else:
+            if args.sarif:
+                with args.sarif.open("x", encoding="utf-8") as handle:
+                    json.dump(ci.to_sarif(report, args.project), handle, indent=2)
+            if args.summary:
+                with args.summary.open("a", encoding="utf-8") as handle:
+                    handle.write(ci.markdown_summary(report, args.project))
+            if args.annotations:
+                print("\n".join(ci.annotations(report, args.project)))
+            if not (args.output or args.sarif or args.summary or args.annotations):
                 print(result, end="")
             if args.fail_on_findings and (report["summary"]["findings"].get("FAIL")
                                           or report["summary"]["controls"].get("ATTESTED_FAIL")):

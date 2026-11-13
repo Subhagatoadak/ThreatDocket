@@ -1,0 +1,170 @@
+name: ThreatDocket scan
+description: Scan a repository for AI security risks mapped to MITRE ATLAS and report them in GitHub code scanning, PR annotations and the job summary.
+author: Subhagatoadak
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  path:
+    description: Directory to scan, relative to the repository root.
+    default: "."
+  exclude:
+    description: Glob patterns to skip, separated by newlines or commas (e.g. "tests/**, examples/**").
+    default: ""
+  profile:
+    description: Optional architecture profile JSON file.
+    default: ""
+  evidence:
+    description: Optional control evidence JSON file.
+    default: ""
+  policy:
+    description: Optional custom control policy JSON file.
+    default: ""
+  fail-on-findings:
+    description: Fail the job when a FAIL finding or an attested control failure is found ("true" or "false").
+    default: "true"
+  upload-sarif:
+    description: Upload results to GitHub code scanning (needs "security-events write" permission).
+    default: "true"
+  category:
+    description: Code scanning category. Use a different value for each scan when one repository runs several.
+    default: "threatdocket"
+  annotations:
+    description: Show findings as inline annotations on the pull request and Checks page.
+    default: "true"
+  python-version:
+    description: Python version used to run ThreatDocket (3.11 or later).
+    default: "3.12"
+  advise:
+    description: Also request an AI advisory and add it to the job summary ("true" or "false").
+    default: "false"
+  llm-provider:
+    description: Model provider for the advisory (openai, anthropic, gemini, compatible).
+    default: ""
+  llm-model:
+    description: Model name for the advisory.
+    default: ""
+  llm-base-url:
+    description: Optional base URL override for the model provider.
+    default: ""
+  llm-api-key:
+    description: API key for the advisory. Pass a secret, e.g. secrets.ANTHROPIC_API_KEY.
+    default: ""
+
+outputs:
+  sarif-file:
+    description: Path of the SARIF report.
+    value: ${{ steps.scan.outputs.sarif-file }}
+  json-file:
+    description: Path of the full JSON report.
+    value: ${{ steps.scan.outputs.json-file }}
+  fail-count:
+    description: Number of FAIL findings.
+    value: ${{ steps.scan.outputs.fail-count }}
+  review-count:
+    description: Number of REVIEW findings.
+    value: ${{ steps.scan.outputs.review-count }}
+  exit-code:
+    description: Scanner exit code (0 clean, 1 failing findings, 2 error).
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install ThreatDocket
+      shell: bash
+      run: python -m pip install --disable-pip-version-check --quiet "$GITHUB_ACTION_PATH"
+
+    - name: Run ThreatDocket scan
+      id: scan
+      shell: bash
+      env:
+        TD_PATH: ${{ inputs.path }}
+        TD_EXCLUDE: ${{ inputs.exclude }}
+        TD_PROFILE: ${{ inputs.profile }}
+        TD_EVIDENCE: ${{ inputs.evidence }}
+        TD_POLICY: ${{ inputs.policy }}
+        TD_ANNOTATIONS: ${{ inputs.annotations }}
+      run: |
+        set +e
+        out="$RUNNER_TEMP/threatdocket"
+        rm -rf "$out" && mkdir -p "$out"
+        args=(scan "$TD_PATH" --output "$out/report.json" --sarif "$out/results.sarif"
+              --summary "$GITHUB_STEP_SUMMARY" --fail-on-findings)
+        [ -n "$TD_PROFILE" ]  && args+=(--profile "$TD_PROFILE")
+        [ -n "$TD_EVIDENCE" ] && args+=(--evidence "$TD_EVIDENCE")
+        [ -n "$TD_POLICY" ]   && args+=(--policy "$TD_POLICY")
+        [ -n "$TD_EXCLUDE" ]  && args+=(--exclude "$TD_EXCLUDE")
+        [ "$TD_ANNOTATIONS" = "true" ] && args+=(--annotations)
+        threatdocket "${args[@]}"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        if [ -f "$out/report.json" ]; then
+          echo "sarif-file=$out/results.sarif" >> "$GITHUB_OUTPUT"
+          echo "json-file=$out/report.json" >> "$GITHUB_OUTPUT"
+          python - "$out/report.json" >> "$GITHUB_OUTPUT" <<'PY'
+        import json, sys
+        counts = json.load(open(sys.argv[1]))["summary"]["findings"]
+        print(f"fail-count={counts.get('FAIL', 0)}")
+        print(f"review-count={counts.get('REVIEW', 0)}")
+        PY
+        fi
+        exit 0
+
+    - name: Upload to GitHub code scanning
+      if: always() && inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@v4
+      continue-on-error: true
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-file }}
+        category: ${{ inputs.category }}
+
+    - name: AI advisory
+      if: always() && inputs.advise == 'true' && steps.scan.outputs.json-file != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        TD_PATH: ${{ inputs.path }}
+        TD_EXCLUDE: ${{ inputs.exclude }}
+        TD_PROFILE: ${{ inputs.profile }}
+        TD_EVIDENCE: ${{ inputs.evidence }}
+        TD_POLICY: ${{ inputs.policy }}
+        THREATDOCKET_LLM_PROVIDER: ${{ inputs.llm-provider }}
+        THREATDOCKET_LLM_MODEL: ${{ inputs.llm-model }}
+        THREATDOCKET_LLM_BASE_URL: ${{ inputs.llm-base-url }}
+        THREATDOCKET_LLM_API_KEY: ${{ inputs.llm-api-key }}
+      run: |
+        args=(advise "$TD_PATH")
+        [ -n "$TD_PROFILE" ]  && args+=(--profile "$TD_PROFILE")
+        [ -n "$TD_EVIDENCE" ] && args+=(--evidence "$TD_EVIDENCE")
+        [ -n "$TD_POLICY" ]   && args+=(--policy "$TD_POLICY")
+        [ -n "$TD_EXCLUDE" ]  && args+=(--exclude "$TD_EXCLUDE")
+        if advice=$(threatdocket "${args[@]}"); then
+          { echo; echo "## 🤖 ThreatDocket AI advisory"; echo; echo "$advice"; } >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "::warning title=ThreatDocket AI advisory::The advisory could not be generated; see the log above."
+        fi
+
+    - name: Enforce result
+      if: always()
+      shell: bash
+      env:
+        TD_CODE: ${{ steps.scan.outputs.exit-code }}
+        TD_FAIL: ${{ inputs.fail-on-findings }}
+        TD_FAILS: ${{ steps.scan.outputs.fail-count }}
+      run: |
+        if [ "$TD_CODE" = "2" ] || [ -z "$TD_CODE" ]; then
+          echo "::error title=ThreatDocket::The scan could not run (invalid input or configuration)."
+          exit 1
+        fi
+        if [ "$TD_CODE" = "1" ] && [ "$TD_FAIL" = "true" ]; then
+          echo "::error title=ThreatDocket::${TD_FAILS:-Some} FAIL finding(s) or attested control failures. See the job summary and code scanning alerts."
+          exit 1
+        fi
+        echo "ThreatDocket scan passed the configured gate."
