@@ -46,3 +46,21 @@ jobs:
           exclude: |
             examples/**
             tests/**
+
+  demo:
+    name: ThreatDocket demo scan (report-only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Scan the intentionally risky demo project
+        uses: ./
+        with:
+          path: examples/demo
+          category: threatdocket-demo
+          # Showcase only: these findings are deliberate and never fail CI.
+          fail-on-findings: "false"
+          annotations: "false"

@@ -90,6 +90,7 @@ jobs:
 | `profile`, `evidence`, `policy` | | JSON files described in the section above |
 | `fail-on-findings` | `true` | Fail the check on a `FAIL` finding or an `ATTESTED_FAIL` control. `REVIEW` findings never fail the check |
 | `upload-sarif` | `true` | Publish to code scanning |
+| `category` | `threatdocket` | Code scanning category; give each scan its own value when a repository runs several |
 | `annotations` | `true` | Show findings inline on the pull request |
 | `advise` | `false` | Add an AI advisory to the run summary; also set `llm-provider`, `llm-model` and `llm-api-key: ${{ secrets.YOUR_KEY }}` |
 

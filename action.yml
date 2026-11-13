@@ -27,6 +27,9 @@ inputs:
   upload-sarif:
     description: Upload results to GitHub code scanning (needs "security-events write" permission).
     default: "true"
+  category:
+    description: Code scanning category. Use a different value for each scan when one repository runs several.
+    default: "threatdocket"
   annotations:
     description: Show findings as inline annotations on the pull request and Checks page.
     default: "true"
@@ -120,7 +123,7 @@ runs:
       continue-on-error: true
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
-        category: threatdocket
+        category: ${{ inputs.category }}
 
     - name: AI advisory
       if: always() && inputs.advise == 'true' && steps.scan.outputs.json-file != ''

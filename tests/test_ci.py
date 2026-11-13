@@ -54,6 +54,7 @@ class FormatTests(unittest.TestCase):
             self.assertIn(result["level"], {"error", "warning"})
         for rule in rules:
             self.assertGreater(float(rule["properties"]["security-severity"]), 0)
+        self.assertNotIn("automationDetails", run)  # the upload step sets the category
         json.dumps(sarif)
 
     def test_paths_outside_base_stay_relative(self):

@@ -89,7 +89,6 @@ def to_sarif(report, project, base=None):
                 "version": _version(),
                 "rules": rules,
             }},
-            "automationDetails": {"id": "threatdocket/"},
             "results": results,
             "properties": {"atlas_version": report["atlas_version"], "warnings": report["warnings"]},
         }],
