@@ -14,7 +14,7 @@ from mock_providers import KEY, Handler, start
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 CLEAN_ENV = {k: v for k, v in os.environ.items()
-             if not k.startswith("ATLAS_") and k not in {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}}
+             if not k.startswith(("ATLAS_", "THREATDOCKET_")) and k not in {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}}
 
 
 class Base(unittest.TestCase):
@@ -30,7 +30,7 @@ class Base(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        env = dict(CLEAN_ENV, ATLAS_CONFIG_DIR=self.tmp.name)
+        env = dict(CLEAN_ENV, THREATDOCKET_CONFIG_DIR=self.tmp.name)
         self.env = mock.patch.dict(os.environ, env, clear=True)
         self.env.start()
         Handler.log.clear()
@@ -167,17 +167,25 @@ class ConfigTests(Base):
         self.assertEqual(llm.resolve_config("openai").api_key, "k1")
 
     def test_env_precedence_and_backward_compat(self):
-        os.environ["ATLAS_LLM_BASE_URL"] = "https://legacy.example/v1"
-        os.environ["ATLAS_LLM_MODEL"] = "legacy"
+        os.environ["THREATDOCKET_LLM_BASE_URL"] = "https://legacy.example/v1"
+        os.environ["THREATDOCKET_LLM_MODEL"] = "legacy"
         c = llm.resolve_config()
         self.assertEqual((c.provider, c.base_url, c.model), ("compatible", "https://legacy.example/v1", "legacy"))
         # generic overrides must not leak into a different provider
         self.assertEqual(llm.resolve_config("anthropic").base_url, llm.PROVIDERS["anthropic"].base_url)
         os.environ["ANTHROPIC_API_KEY"] = "ant-key"
-        os.environ["ATLAS_LLM_PROVIDER"] = "anthropic"
-        del os.environ["ATLAS_LLM_BASE_URL"], os.environ["ATLAS_LLM_MODEL"]
+        os.environ["THREATDOCKET_LLM_PROVIDER"] = "anthropic"
+        del os.environ["THREATDOCKET_LLM_BASE_URL"], os.environ["THREATDOCKET_LLM_MODEL"]
         self.assertEqual(llm.resolve_config().api_key, "ant-key")
         self.assertEqual(llm.resolve_config(model="x", base_url="https://b.example").model, "x")
+
+    def test_legacy_atlas_variables_still_work(self):
+        os.environ["ATLAS_LLM_BASE_URL"] = "https://legacy.example/v1"
+        os.environ["ATLAS_LLM_MODEL"] = "legacy"
+        c = llm.resolve_config()
+        self.assertEqual((c.provider, c.base_url, c.model), ("compatible", "https://legacy.example/v1", "legacy"))
+        os.environ["THREATDOCKET_LLM_MODEL"] = "new"  # new name wins
+        self.assertEqual(llm.resolve_config().model, "new")
 
     def test_corrupt_config_ignored(self):
         llm.config_path().parent.mkdir(parents=True, exist_ok=True)

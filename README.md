@@ -76,7 +76,7 @@ Open the **AI advisor** tab in `threatdocket tui`:
 3. Press **Check** (`Ctrl+T`). A progress bar runs five checks: settings validation, DNS resolution, authentication and model listing, model availability, and a one-word test generation. A failed step shows the provider's reason with any key redacted. After the check passes, the model field suggests the model IDs your key can see.
 4. Press **Run advisory** (`Ctrl+R`). The answer opens in the **AI findings** tab; repeated runs in a session stack there, newest first.
 
-Successful checks and runs save the settings for each provider to `~/.config/threatdocket/config.json`, with owner-only permissions. Untick **Remember key** to keep the key out of that file. **Save** (`Ctrl+S`) stores the settings without running anything. `ATLAS_CONFIG_DIR` relocates the file.
+Successful checks and runs save the settings for each provider to `~/.config/threatdocket/config.json`, with owner-only permissions. Untick **Remember key** to keep the key out of that file. **Save** (`Ctrl+S`) stores the settings without running anything. `THREATDOCKET_CONFIG_DIR` relocates the file.
 
 ### Configure from the command line
 
@@ -88,7 +88,7 @@ threatdocket advise /path/to/project --provider anthropic --model claude-sonnet-
 threatdocket advise /path/to/project --provider openai --base-url https://gateway.example/v1
 ```
 
-The precedence is command-line flags, then `ATLAS_LLM_PROVIDER` / `ATLAS_LLM_MODEL` / `ATLAS_LLM_BASE_URL` / `ATLAS_LLM_API_KEY` (applied to the active provider), then saved settings, then the provider's standard key variable and default base URL. A model name must always be supplied (`--model`, `ATLAS_LLM_MODEL`, or saved settings). Setting only `ATLAS_LLM_BASE_URL` and `ATLAS_LLM_MODEL`, as in earlier versions, still selects an OpenAI-compatible endpoint. `check-llm` exits `0` when every check passes and `1` otherwise.
+The precedence is command-line flags, then `THREATDOCKET_LLM_PROVIDER` / `THREATDOCKET_LLM_MODEL` / `THREATDOCKET_LLM_BASE_URL` / `THREATDOCKET_LLM_API_KEY` (applied to the active provider), then saved settings, then the provider's standard key variable and default base URL. A model name must always be supplied (`--model`, `THREATDOCKET_LLM_MODEL`, or saved settings). The earlier `ATLAS_LLM_*` names are still accepted, and setting only a base URL and model, as in earlier versions, still selects an OpenAI-compatible endpoint. `check-llm` exits `0` when every check passes and `1` otherwise.
 
 Base URLs must use HTTPS. Plain HTTP is accepted only for localhost. Redirects are not followed. The request contains fixed rule labels, remediation text, and counts. Repository contents, filenames, paths, evidence references, and credential matches stay local. Advice is advisory text and has no effect on findings, verdicts, or CI.
 

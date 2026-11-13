@@ -75,10 +75,15 @@ class NoRedirect(HTTPRedirectHandler):
 
 # --------------------------------------------------------------------------- config persistence
 
+def _env(name):
+    """Read THREATDOCKET_<name>, falling back to the legacy ATLAS_<name> variable."""
+    return (os.getenv("THREATDOCKET_" + name) or os.getenv("ATLAS_" + name) or "").strip()
+
+
 def config_path():
     """Location of the saved settings file (owner-only permissions)."""
-    if os.getenv("ATLAS_CONFIG_DIR"):
-        base = Path(os.environ["ATLAS_CONFIG_DIR"])
+    if _env("CONFIG_DIR"):
+        base = Path(_env("CONFIG_DIR"))
     else:
         base = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / ".config") / "threatdocket"
     return base / "config.json"
@@ -138,29 +143,29 @@ def provider_settings(provider, saved=None):
         is_active = False
     stored = saved["providers"].get(provider, {})
 
-    def env(name):  # generic ATLAS_LLM_* overrides target only the active provider
-        return os.getenv(name, "").strip() if is_active else ""
+    def env(name):  # generic THREATDOCKET_LLM_* overrides target only the active provider
+        return _env(name) if is_active else ""
 
     env_key = next((os.environ[name].strip() for name in spec.key_env if os.getenv(name, "").strip()), "")
     return LLMConfig(
         provider=provider,
-        model=env("ATLAS_LLM_MODEL") or stored.get("model") or "",  # no default: the user chooses
-        base_url=env("ATLAS_LLM_BASE_URL") or stored.get("base_url") or spec.base_url,
-        api_key=env("ATLAS_LLM_API_KEY") or stored.get("api_key") or env_key,
+        model=env("LLM_MODEL") or stored.get("model") or "",  # no default: the user chooses
+        base_url=env("LLM_BASE_URL") or stored.get("base_url") or spec.base_url,
+        api_key=env("LLM_API_KEY") or stored.get("api_key") or env_key,
     )
 
 
 def active_provider(saved=None):
     saved = saved or load_saved()
-    env = os.getenv("ATLAS_LLM_PROVIDER", "").strip().lower()
+    env = _env("LLM_PROVIDER").lower()
     if env:
         if env not in PROVIDERS:
-            raise ValueError("ATLAS_LLM_PROVIDER must be one of: " + ", ".join(PROVIDERS))
+            raise ValueError("THREATDOCKET_LLM_PROVIDER must be one of: " + ", ".join(PROVIDERS))
         return env
     if saved["provider"]:
         return saved["provider"]
     # Backward compatibility: a bare base URL meant an OpenAI-compatible endpoint.
-    return "compatible" if os.getenv("ATLAS_LLM_BASE_URL", "").strip() else "openai"
+    return "compatible" if _env("LLM_BASE_URL") else "openai"
 
 
 def resolve_config(provider=None, model=None, base_url=None, api_key=None, path=None):

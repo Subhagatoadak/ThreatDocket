@@ -14,7 +14,7 @@ from threatdocket.tui import Dashboard
 from mock_providers import KEY, start
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
-SHOTS = os.getenv("ATLAS_TEST_SCREENSHOTS")
+SHOTS = os.getenv("THREATDOCKET_TEST_SCREENSHOTS")
 
 
 class AdvisorTabTests(unittest.IsolatedAsyncioTestCase):
@@ -30,8 +30,8 @@ class AdvisorTabTests(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        env = {k: v for k, v in os.environ.items() if not k.startswith("ATLAS_") and not k.endswith("_API_KEY")}
-        self.env = mock.patch.dict(os.environ, dict(env, ATLAS_CONFIG_DIR=self.tmp.name), clear=True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("ATLAS_", "THREATDOCKET_")) and not k.endswith("_API_KEY")}
+        self.env = mock.patch.dict(os.environ, dict(env, THREATDOCKET_CONFIG_DIR=self.tmp.name), clear=True)
         self.env.start()
 
     def tearDown(self):
