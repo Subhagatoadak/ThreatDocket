@@ -94,6 +94,36 @@ jobs:
 | `annotations` | `true` | Show findings inline on the pull request |
 | `advise` | `false` | Add an AI advisory to the run summary; also set `llm-provider`, `llm-model` and `llm-api-key: ${{ secrets.YOUR_KEY }}` |
 
+### AI advisory in GitHub Actions
+
+The AI advisory adds a "🤖 ThreatDocket AI advisory" section to the workflow run summary. It explains what to fix first and where control evidence is missing. The model receives only aggregate rule counts, fixed remediation text and control outcome counts. Source code, file paths, evidence references and matched secrets are never sent. A failed advisory, such as a wrong key or quota, adds a warning and never fails the job.
+
+1. In the repository, open **Settings → Secrets and variables → Actions**.
+2. On the **Secrets** tab, add `THREATDOCKET_LLM_API_KEY` with your OpenAI, Anthropic or Gemini key.
+3. On the **Variables** tab, add `THREATDOCKET_LLM_PROVIDER` (`openai`, `anthropic`, `gemini` or `compatible`) and `THREATDOCKET_LLM_MODEL` (for example the model `threatdocket check-llm` confirmed locally). Add `THREATDOCKET_LLM_BASE_URL` only for a proxy, gateway or self-hosted endpoint.
+
+Or from a terminal with the GitHub CLI (it prompts for the key, so it is not stored in shell history):
+
+```bash
+gh secret set THREATDOCKET_LLM_API_KEY
+gh variable set THREATDOCKET_LLM_PROVIDER --body gemini
+gh variable set THREATDOCKET_LLM_MODEL --body <your-model>
+```
+
+Then pass them to the action:
+
+```yaml
+      - uses: Subhagatoadak/ThreatDocket@main
+        with:
+          advise: ${{ vars.THREATDOCKET_LLM_PROVIDER != '' && 'true' || 'false' }}
+          llm-provider: ${{ vars.THREATDOCKET_LLM_PROVIDER }}
+          llm-model: ${{ vars.THREATDOCKET_LLM_MODEL }}
+          llm-base-url: ${{ vars.THREATDOCKET_LLM_BASE_URL }}
+          llm-api-key: ${{ secrets.THREATDOCKET_LLM_API_KEY }}
+```
+
+Each run makes one model request, which your provider bills. GitHub does not pass secrets to workflows triggered by pull requests from forks, so those runs skip the advisory with a warning. In this repository the advisory runs on the demo scan job, which has findings to explain.
+
 The action outputs `fail-count`, `review-count`, `exit-code`, `sarif-file` and `json-file` for later steps. Code scanning is free for public repositories. Private repositories need GitHub Advanced Security (GitHub Code Security) for the Security tab; annotations and the run summary work without it. Set `upload-sarif: false` if it is not available. Pull requests from forks cannot upload to code scanning, so the action continues and still annotates the pull request. Pin a release tag or commit SHA instead of `@main` for stable builds.
 
 ## Command-line CI and Python integration
