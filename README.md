@@ -77,7 +77,7 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v5
-      - uses: Subhagatoadak/ThreatDocket@main
+      - uses: Subhagatoadak/ThreatDocket@v1.0.1
         with:
           exclude: |
             tests/fixtures/**
@@ -113,7 +113,7 @@ gh variable set THREATDOCKET_LLM_MODEL --body <your-model>
 Then pass them to the action:
 
 ```yaml
-      - uses: Subhagatoadak/ThreatDocket@main
+      - uses: Subhagatoadak/ThreatDocket@v1.0.1
         with:
           advise: ${{ vars.THREATDOCKET_LLM_PROVIDER != '' && 'true' || 'false' }}
           llm-provider: ${{ vars.THREATDOCKET_LLM_PROVIDER }}
@@ -124,7 +124,7 @@ Then pass them to the action:
 
 Each run makes one model request, which your provider bills. GitHub does not pass secrets to workflows triggered by pull requests from forks, so those runs skip the advisory with a warning. In this repository the advisory runs on the demo scan job, which has findings to explain.
 
-The action outputs `fail-count`, `review-count`, `exit-code`, `sarif-file` and `json-file` for later steps. Code scanning is free for public repositories. Private repositories need GitHub Advanced Security (GitHub Code Security) for the Security tab; annotations and the run summary work without it. Set `upload-sarif: false` if it is not available. Pull requests from forks cannot upload to code scanning, so the action continues and still annotates the pull request. Pin a release tag or commit SHA instead of `@main` for stable builds.
+The action outputs `fail-count`, `review-count`, `exit-code`, `sarif-file` and `json-file` for later steps. Code scanning is free for public repositories. Private repositories need GitHub Advanced Security (GitHub Code Security) for the Security tab; annotations and the run summary work without it. Set `upload-sarif: false` if it is not available. Pull requests from forks cannot upload to code scanning, so the action continues and still annotates the pull request. The examples pin release `v1.0.1`; see [Releases](https://github.com/Subhagatoadak/ThreatDocket/releases) for newer versions. Pinning a commit SHA is the strictest option. `@main` follows unreleased changes.
 
 ## Command-line CI and Python integration
 
